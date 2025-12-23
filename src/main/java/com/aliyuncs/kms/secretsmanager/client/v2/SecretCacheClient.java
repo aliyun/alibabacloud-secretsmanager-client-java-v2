@@ -1,0 +1,371 @@
+package com.aliyuncs.kms.secretsmanager.client.v2;
+
+import com.aliyun.kms20160120.models.GetSecretValueRequest;
+import com.aliyun.kms20160120.models.GetSecretValueResponse;
+import com.aliyun.tea.TeaException;
+import com.aliyun.tea.utils.StringUtils;
+import com.aliyuncs.kms.secretsmanager.client.v2.cache.CacheSecretStoreStrategy;
+import com.aliyuncs.kms.secretsmanager.client.v2.cache.SecretCacheHook;
+import com.aliyuncs.kms.secretsmanager.client.v2.exception.CacheSecretException;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.CacheSecretInfo;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.SecretInfo;
+import com.aliyuncs.kms.secretsmanager.client.v2.service.RefreshSecretStrategy;
+import com.aliyuncs.kms.secretsmanager.client.v2.service.SecretManagerClient;
+import com.aliyuncs.kms.secretsmanager.client.v2.utils.BackoffUtils;
+import com.aliyuncs.kms.secretsmanager.client.v2.utils.ByteBufferUtils;
+import com.aliyuncs.kms.secretsmanager.client.v2.utils.CacheClientConstant;
+import com.aliyuncs.kms.secretsmanager.client.v2.utils.CommonLogger;
+
+import java.io.Closeable;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.*;
+
+public class SecretCacheClient implements Closeable {
+
+    /**
+     * 默认TTL时间
+     */
+    private static final long DEFAULT_TTL = 60 * 60 * 1000;
+
+    private final ScheduledThreadPoolExecutor scheduledThreadPoolExecutor = new ScheduledThreadPoolExecutor(5);
+    private final Map<String, ScheduledFuture> scheduledFutureMap = new ConcurrentHashMap<>();
+    private final Map<String, Long> nextExecuteTimeMap = new ConcurrentHashMap<>();
+
+    /**
+     * 凭据Version Stage
+     */
+    protected String stage = CacheClientConstant.STAGE_ACS_CURRENT;
+
+    /**
+     * secret value解析TTL字段名称
+     */
+    protected String jsonTTLPropertyName = "ttl";
+
+    protected SecretManagerClient secretClient;
+    protected CacheSecretStoreStrategy cacheSecretStoreStrategy;
+    protected RefreshSecretStrategy refreshSecretStrategy;
+    protected SecretCacheHook cacheHook;
+    protected Map<String, Long> secretTTLMap = new HashMap<>();
+    private Thread monitorThread;
+
+    public SecretCacheClient() {
+
+    }
+
+    /**
+     * 根据凭据名称获取secretInfo信息
+     *
+     * @param secretName 指定的凭据名称
+     * @return secretInfo信息
+     */
+    public SecretInfo getSecretInfo(final String secretName) throws CacheSecretException {
+        if (StringUtils.isEmpty(secretName)) {
+            throw new IllegalArgumentException("the argument[secretName] must not be null");
+        }
+        CacheSecretInfo cacheSecretInfo = this.cacheSecretStoreStrategy.getCacheSecretInfo(secretName);
+        if (checkCacheSecretInfoIsValid(cacheSecretInfo)) {
+            return cacheHook.get(cacheSecretInfo);
+        } else {
+            synchronized (secretName.intern()) {
+                cacheSecretInfo = this.cacheSecretStoreStrategy.getCacheSecretInfo(secretName);
+                if (checkCacheSecretInfoIsValid(cacheSecretInfo)) {
+                    return cacheHook.get(cacheSecretInfo);
+                } else {
+                    SecretInfo secretInfo = getSecretValue(secretName);
+                    storeAndRefresh(secretName, secretInfo);
+                    CacheSecretInfo cacheSecret = cacheHook.put(secretInfo);
+                    return cacheSecret == null ? null : cacheSecret.getSecretInfo();
+                }
+            }
+        }
+    }
+
+    /**
+     * 根据凭据名称获取凭据存储值文本信息
+     *
+     * @param secretName 指定的凭据名称
+     * @return 凭据存储值文本信息
+     */
+    public String getStringValue(final String secretName) throws CacheSecretException {
+        SecretInfo secretInfo = getSecretInfo(secretName);
+        if (secretInfo == null) {
+            return null;
+        }
+        if (!CacheClientConstant.TEXT_DATA_TYPE.equals(secretInfo.getSecretDataType())) {
+            throw new IllegalArgumentException(String.format("the secret named[%s] do not support text value", secretName));
+        }
+        return secretInfo.getSecretValue();
+    }
+
+    /**
+     * 根据凭据名称获取凭据存储的二进制信息
+     *
+     * @param secretName 指定的凭据名称
+     * @return 凭据存储值二进制信息
+     */
+    public ByteBuffer getBinaryValue(final String secretName) throws CacheSecretException {
+        SecretInfo secretInfo = getSecretInfo(secretName);
+        if (secretInfo == null) {
+            return null;
+        }
+        if (!CacheClientConstant.BINARY_DATA_TYPE.equals(secretInfo.getSecretDataType())) {
+            throw new IllegalArgumentException(String.format("the secret named[%s] do not support binary value", secretName));
+        }
+        return ByteBufferUtils.convertStringToByte(secretInfo.getSecretValue());
+    }
+
+    /**
+     * 强制刷新指定的凭据名称
+     *
+     * @param secretName 指定的凭据名称
+     * @return 刷新是否成功
+     * @throws InterruptedException
+     */
+    public boolean refreshNow(final String secretName) throws InterruptedException {
+        if (StringUtils.isEmpty(secretName)) {
+            throw new IllegalArgumentException("the argument[secretName] must not be null");
+        }
+        return refreshNow(secretName, null);
+    }
+
+    private boolean refreshNow(final String secretName, SecretInfo secretInfo) throws InterruptedException {
+        boolean executeResult = true;
+        synchronized (secretName.intern()) {
+            try {
+                refresh(secretName, secretInfo);
+            } catch (Throwable e) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("action:refresh", e);
+                executeResult = false;
+            }
+            try {
+                removeRefreshTask(secretName);
+            } catch (Throwable e) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("action:removeRefreshTask", e);
+                executeResult = false;
+            }
+            try {
+                addRefreshTask(secretName, new RefreshSecretTask(secretName));
+            } catch (Throwable e) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("action:addRefreshTask", e);
+                executeResult = false;
+            }
+        }
+        return executeResult;
+    }
+
+    protected void init() throws CacheSecretException {
+        secretClient.init();
+        cacheSecretStoreStrategy.init();
+        refreshSecretStrategy.init();
+        cacheHook.init();
+        for (String secretName : secretTTLMap.keySet()) {
+            SecretInfo secretInfo = null;
+            try {
+                secretInfo = getSecretValue(secretName);
+            } catch (CacheSecretException e) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("action:initSecretCacheClient", e);
+                if (judgeSkipRefreshException(e)) {
+                    throw e;
+                }
+            }
+            storeAndRefresh(secretName, secretInfo);
+        }
+        monitorThread = new Thread(new MonitorRefreshSecretTask());
+        monitorThread.start();
+        CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).infof("secretCacheClient init success");
+    }
+
+    private boolean judgeCacheExpire(final CacheSecretInfo cacheSecretInfo) {
+        long ttl = refreshSecretStrategy.parseTTL(cacheSecretInfo.getSecretInfo());
+        if (ttl <= 0) {
+            ttl = secretTTLMap.getOrDefault(cacheSecretInfo.getSecretInfo().getSecretName(), DEFAULT_TTL);
+        }
+        return System.currentTimeMillis() - cacheSecretInfo.getRefreshTimestamp() > ttl;
+    }
+
+    private SecretInfo getSecretValue(final String secretName) throws CacheSecretException {
+        GetSecretValueRequest request = new GetSecretValueRequest();
+        request.setSecretName(secretName);
+        request.setVersionStage(stage);
+        request.setFetchExtendedConfig(true);
+        GetSecretValueResponse resp;
+        try {
+            resp = secretClient.getSecretValue(request);
+        } catch (Exception e) {
+            CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("action:getSecretValue", e);
+            if (!BackoffUtils.judgeNeedRecoveryException(e)) {
+                throw new CacheSecretException(e);
+            }
+            try {
+                SecretInfo secretInfo = cacheHook.recoveryGetSecret(secretName);
+                if (secretInfo != null) {
+                    return secretInfo;
+                } else {
+                    throw new CacheSecretException(e);
+                }
+            } catch (TeaException ce) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("action:getSecretValue", e);
+                throw new CacheSecretException(e);
+            }
+        }
+        return new SecretInfo(resp.getBody().getSecretName(), resp.getBody().getVersionId(), resp.getBody().getSecretData(), resp.getBody().getSecretDataType(), resp.getBody().getCreateTime(), resp.getBody().getSecretType(), resp.getBody().getAutomaticRotation(), resp.getBody().getExtendedConfig(), resp.getBody().getRotationInterval(), resp.getBody().getNextRotationDate());
+
+    }
+
+    private void storeAndRefresh(final String secretName, final SecretInfo secretInfo) {
+        try {
+            refreshNow(secretName, secretInfo);
+        } catch (InterruptedException ignore) {
+            // 此异常忽略不阻碍用户流程
+        }
+    }
+
+    private void refresh(String secretName, SecretInfo secretInfo) throws CacheSecretException {
+        if (secretInfo == null) {
+            secretInfo = getSecretValue(secretName);
+        }
+        CacheSecretInfo cacheSecretInfo = cacheHook.put(secretInfo);
+        if (cacheSecretInfo != null) {
+            cacheSecretStoreStrategy.storeSecret(cacheSecretInfo);
+        }
+        CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).infof("secretName:{} refresh success current versionId:{}", secretName, secretInfo.getVersionId());
+    }
+
+    private void addRefreshTask(String secretName, Runnable runnable) throws CacheSecretException {
+        CacheSecretInfo cacheSecretInfo = cacheSecretStoreStrategy.getCacheSecretInfo(secretName);
+        long executeTime = refreshSecretStrategy.parseNextExecuteTime(cacheSecretInfo);
+        if (executeTime <= 0) {
+            long refreshTimestamp = cacheSecretInfo.getRefreshTimestamp();
+            executeTime = refreshSecretStrategy.getNextExecuteTime(secretName, secretTTLMap.getOrDefault(secretName, DEFAULT_TTL), refreshTimestamp);
+            executeTime = Math.max(executeTime, System.currentTimeMillis());
+        }
+        nextExecuteTimeMap.put(secretName, executeTime);
+        ScheduledFuture<?> schedule = scheduledThreadPoolExecutor.schedule(runnable, executeTime - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+        scheduledFutureMap.put(secretName, schedule);
+        CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).infof("secretName:{} addRefreshTask success", secretName);
+    }
+
+    private void removeRefreshTask(String secretName) throws InterruptedException {
+        if (scheduledFutureMap.get(secretName) != null) {
+            scheduledThreadPoolExecutor.remove((RunnableScheduledFuture<?>) scheduledFutureMap.get(secretName));
+        }
+    }
+
+    private boolean checkCacheSecretInfoIsValid(CacheSecretInfo cacheSecretInfo) {
+        if (cacheSecretInfo != null && !judgeCacheExpire(cacheSecretInfo)) {
+            return checkSecretValueIsEmpty(cacheSecretInfo);
+        }
+        return false;
+    }
+
+    private boolean checkSecretValueIsEmpty(CacheSecretInfo cacheSecretInfo) {
+        if (cacheSecretInfo != null) {
+            SecretInfo secretInfo = cacheSecretInfo.getSecretInfo();
+            if (secretInfo != null && !StringUtils.isEmpty(secretInfo.getSecretValue())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean judgeServerException(TeaException e) {
+        return BackoffUtils.judgeNeedBackoff(e);
+    }
+
+    private boolean judgeSkipRefreshException(CacheSecretException e) {
+        return e.getCause() instanceof TeaException && !judgeServerException((TeaException) e.getCause())
+                && !(CacheClientConstant.TEA_EXCEPTION_ERROR_CODE_FORBIDDEN_IN_DEBT_OVER_DUE.equals(((TeaException) e.getCause()).getCode()) || CacheClientConstant.TEA_EXCEPTION_ERROR_CODE_FORBIDDEN_IN_DEBT.equals(((TeaException) e.getCause()).getCode()));
+    }
+
+    @Override
+    public void close() throws IOException {
+        if (cacheSecretStoreStrategy != null) {
+            cacheSecretStoreStrategy.close();
+        }
+        if (refreshSecretStrategy != null) {
+            refreshSecretStrategy.close();
+        }
+        if (secretClient != null) {
+            secretClient.close();
+        }
+        if (cacheHook != null) {
+            cacheHook.close();
+        }
+        if (!scheduledThreadPoolExecutor.isShutdown()) {
+            scheduledThreadPoolExecutor.shutdownNow();
+        }
+        if (monitorThread != null && !monitorThread.isInterrupted()) {
+            monitorThread.interrupt();
+        }
+    }
+
+    class RefreshSecretTask implements Runnable {
+        private final String secretName;
+
+        public RefreshSecretTask(String secretName) {
+            this.secretName = secretName;
+        }
+
+        @Override
+        public void run() {
+            try {
+                refresh(secretName, null);
+            } catch (Throwable e) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("action:refreshSecretTask", e);
+            }
+            try {
+                addRefreshTask(secretName, this);
+            } catch (Throwable e) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("action:addRefreshTask", e);
+            }
+        }
+    }
+
+    class MonitorRefreshSecretTask implements Runnable {
+        @Override
+        public void run() {
+            while (!Thread.currentThread().isInterrupted()) {
+                Set<String> secretNames = nextExecuteTimeMap.keySet();
+                if (secretNames != null && !secretNames.isEmpty()) {
+                    for (String secretName : secretNames) {
+                        try {
+                            CacheSecretInfo cacheSecretInfo = cacheSecretStoreStrategy.getCacheSecretInfo(secretName);
+                            if (cacheSecretInfo != null) {
+                                Long nextExecuteTime = nextExecuteTimeMap.get(secretName);
+                                if (System.currentTimeMillis() > nextExecuteTime + CacheClientConstant.REQUEST_WAITING_TIME) {
+                                    CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).warnf("MonitorRefreshSecretTask secret is expired, secretName={}", secretName);
+                                    try {
+                                        refreshNow(secretName);
+                                    } catch (Throwable e) {
+                                        CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("MonitorRefreshSecretTask refreshNow error, secretName={}", secretName, e);
+                                    }
+                                }
+                            } else {
+                                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).warnf("MonitorRefreshSecretTask can not get cache secret, secretName={}", secretName);
+                                try {
+                                    refreshNow(secretName);
+                                } catch (Throwable e) {
+                                    CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("MonitorRefreshSecretTask refreshNow error, secretName={}", secretName, e);
+                                }
+                            }
+                        } catch (Throwable e) {
+                            CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("MonitorRefreshSecretTask error, secretName={}", secretName, e);
+                        }
+                    }
+                }
+                try {
+                    Thread.sleep(CacheClientConstant.MONITOR_INTERVAL);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    break;
+                } catch (Throwable e) {
+                    CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).errorf("MonitorRefreshSecretTask sleep error", e);
+                }
+            }
+        }
+    }
+}
