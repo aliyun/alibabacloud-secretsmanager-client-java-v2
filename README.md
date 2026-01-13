@@ -1,15 +1,15 @@
 ![](https://aliyunsdk-pages.alicdn.com/icons/AlibabaCloud.svg)
 
-# Alibaba Secrets Manager Client V2 for Java
+# Alibaba Cloud Secrets Manager Client V2 for Java
 
 [![GitHub version](https://badge.fury.io/gh/aliyun%2Falibabacloud-secretsmanager-client-java.svg)](https://badge.fury.io/gh/aliyun%2Falibabacloud-secretsmanager-client-java)
 [![Build Status](https://travis-ci.org/aliyun/alibabacloud-secretsmanager-client-java.svg?branch=master)](https://travis-ci.org/aliyun/alibabacloud-secretsmanager-client-java)
 
-Alibaba Secrets Manager Client V2 for Java enables Java developers to easily work with Aliyun KMS Secrets. You can get started in minutes using ***Maven*** .
+Alibaba Cloud Secrets Manager Client V2 for Java enables Java developers to easily work with Alibaba Cloud KMS Secrets. You can get started in minutes using ***Maven*** .
 
 *Read this in other languages: [English](README.md), [简体中文](README.zh-cn.md)*
 
-- [Alibaba Secrets Manager Client V2 Homepage]()
+- [Alibaba Cloud Secrets Manager Client V2 Homepage]()
 - [Issues](https://github.com/aliyun/alibabacloud-secretsmanager-client-java-v2/issues)
 - [Release](https://github.com/aliyun/alibabacloud-secretsmanager-client-java-v2/releases)
 
@@ -30,7 +30,7 @@ Alibaba Secrets Manager Client V2 for Java enables Java developers to easily wor
 
 ## Install
 
-The recommended way to use the Aliyun Secrets Manager Client V2 for Java in your project is to consume it from Maven. Import as follows:
+The recommended way to use the Alibaba Cloud Secrets Manager Client V2 for Java in your project is to consume it from Maven. Import as follows:
 
 ```
 <dependency>
@@ -123,7 +123,7 @@ public class CacheClientSimpleParametersSample {
     }
 }
 ```
-* Build Secrets Manager Client by Aliyun default credential chain. For more information, please refer to [Aliyun default credential chain](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-access-credentials#3cb4c2e29d9hk).
+* Build Secrets Manager Client by Alibaba Cloud default credential chain. For more information, please refer to [Alibaba Cloud default credential chain](https://help.aliyun.com/zh/sdk/developer-reference/v2-manage-access-credentials#3cb4c2e29d9hk).
 
 ```Java
 import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClient;
