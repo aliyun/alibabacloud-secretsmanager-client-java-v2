@@ -10,7 +10,7 @@ public interface CacheClientConstant {
     /**
      * 项目版本
      */
-    String PROJECT_VERSION = "2.0.0";
+    String PROJECT_VERSION = "2.0.1";
 
     /**
      * Secrets Manager Client Java V2的User Agent
