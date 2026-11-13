@@ -23,6 +23,7 @@
 * 支持阿里云凭据管家内存和文件两种缓存凭据机制
 * 支持凭据名称相同场景下的跨地域容灾
 * 支持默认规避策略和用户自定义规避策略
+* 支持云原生认证模式（ECS实例身份、ACK OIDC JWT）
 
 ## 软件要求
 
@@ -37,7 +38,7 @@
 <dependency>
     <groupId>com.aliyun</groupId>
     <artifactId>alibabacloud-secretsmanager-client-v2</artifactId>
-    <version>2.0.1</version>
+    <version>2.0.2</version>
 </dependency>
 ```
 
@@ -176,6 +177,90 @@ public class CacheClientOIDCParametersSample {
                                                     .build())
                                     .withRegion("#regionId#")
                                     .build())
+                    .build();
+            SecretInfo secretInfo = client.getSecretInfo("#secretName#");
+            System.out.println(secretInfo);
+        } catch (CacheSecretException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+* 通过云原生 ECS实例身份认证构建客户端
+
+```Java
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClient;
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClientBuilder;
+import com.aliyuncs.kms.secretsmanager.client.v2.exception.CacheSecretException;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.SecretInfo;
+import com.aliyuncs.kms.secretsmanager.client.v2.service.BaseSecretManagerClientBuilder;
+
+public class CacheClientMAuthECSSample {
+
+    public static void main(String[] args) {
+        try {
+            SecretCacheClient client = SecretCacheClientBuilder.newCacheClientBuilder(
+                    BaseSecretManagerClientBuilder.standard()
+                            .withECSInstanceIdentity("#aapArn#")
+                            .withRegion("#regionId#")
+                            .build())
+                    .build();
+            SecretInfo secretInfo = client.getSecretInfo("#secretName#");
+            System.out.println(secretInfo);
+        } catch (CacheSecretException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+* 通过云原生 ACK OIDC JWT认证构建客户端
+
+```Java
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClient;
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClientBuilder;
+import com.aliyuncs.kms.secretsmanager.client.v2.exception.CacheSecretException;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.SecretInfo;
+import com.aliyuncs.kms.secretsmanager.client.v2.service.BaseSecretManagerClientBuilder;
+
+public class CacheClientMAuthACKSample {
+
+    public static void main(String[] args) {
+        try {
+            SecretCacheClient client = SecretCacheClientBuilder.newCacheClientBuilder(
+                    BaseSecretManagerClientBuilder.standard()
+                            .withACKOidcJwt("#aapArn#", "#tokenPath#")
+                            .withRegion("#regionId#")
+                            .build())
+                    .build();
+            SecretInfo secretInfo = client.getSecretInfo("#secretName#");
+            System.out.println(secretInfo);
+        } catch (CacheSecretException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+* 通过 ClientKey认证构建客户端
+
+```Java
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClient;
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClientBuilder;
+import com.aliyuncs.kms.secretsmanager.client.v2.exception.CacheSecretException;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.SecretInfo;
+import com.aliyuncs.kms.secretsmanager.client.v2.service.BaseSecretManagerClientBuilder;
+
+public class CacheClientMAuthClientKeySample {
+
+    public static void main(String[] args) {
+        try {
+            SecretCacheClient client = SecretCacheClientBuilder.newCacheClientBuilder(
+                    BaseSecretManagerClientBuilder.standard()
+                            .withClientKey("#clientKeyConfigPath#", "#clientKeyPasswordPath#")
+                            .withRegion("#regionId#")
+                            .build())
                     .build();
             SecretInfo secretInfo = client.getSecretInfo("#secretName#");
             System.out.println(secretInfo);

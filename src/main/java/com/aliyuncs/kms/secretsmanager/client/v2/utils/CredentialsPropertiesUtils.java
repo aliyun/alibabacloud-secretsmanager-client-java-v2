@@ -29,6 +29,7 @@ public class CredentialsPropertiesUtils {
         if (properties != null && !properties.isEmpty()) {
             initKmsRegionsFromConfig(credentialsProperties);
             initCredentialsProvider(credentialsProperties);
+            initMAuthConfig(credentialsProperties);
             return credentialsProperties;
         } else {
             return null;
@@ -53,5 +54,15 @@ public class CredentialsPropertiesUtils {
     private static void initCredentialsProvider(CredentialsProperties credentialsProperties) {
         AlibabaCloudCredentialsProvider credentialsProvider = CredentialsProviderUtils.initCredentialsProviderFromConfig(credentialsProperties.getSourceProperties());
         credentialsProperties.setProvider(credentialsProvider);
+    }
+
+    /**
+     * 初始化MAuth配置
+     *
+     * @param credentialsProperties 凭据配置属性
+     */
+    private static void initMAuthConfig(CredentialsProperties credentialsProperties) {
+        com.aliyuncs.kms.secretsmanager.client.v2.mauth.config.AuthConfig mauthConfig = CredentialsProviderUtils.initMAuthConfigFromConfig(credentialsProperties.getSourceProperties());
+        credentialsProperties.setMauthConfig(mauthConfig);
     }
 }

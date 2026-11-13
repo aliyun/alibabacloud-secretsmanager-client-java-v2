@@ -330,7 +330,7 @@ public class SecretCacheClient implements Closeable {
         public void run() {
             while (!Thread.currentThread().isInterrupted()) {
                 Set<String> secretNames = nextExecuteTimeMap.keySet();
-                if (secretNames != null && !secretNames.isEmpty()) {
+                if (!secretNames.isEmpty()) {
                     for (String secretName : secretNames) {
                         try {
                             CacheSecretInfo cacheSecretInfo = cacheSecretStoreStrategy.getCacheSecretInfo(secretName);
