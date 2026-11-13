@@ -47,9 +47,13 @@ public class PingUtils {
                 return getCheckResult(sb.toString(), pattern);
             }
         } catch (InterruptedException e) {
-            CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).warnf("action:ping", e);
+            if (CommonLogger.isRegistered(CacheClientConstant.MODE_NAME)) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).warnf("action:ping", e);
+            }
         } catch (IOException e) {
-            CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).warnf("action:ping", "ping command not found or cannot be executed, returning -1", e);
+            if (CommonLogger.isRegistered(CacheClientConstant.MODE_NAME)) {
+                CommonLogger.getCommonLogger(CacheClientConstant.MODE_NAME).warnf("action:ping", "ping command not found or cannot be executed, returning -1", e);
+            }
         } finally {
             if (in != null) {
                 try {
