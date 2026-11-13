@@ -7,6 +7,7 @@ import com.aliyun.credentials.provider.OIDCRoleArnCredentialProvider;
 import com.aliyun.credentials.provider.StaticCredentialsProvider;
 import com.aliyun.tea.utils.StringUtils;
 import com.aliyun.tea.utils.Validate;
+import com.aliyuncs.kms.secretsmanager.client.v2.mauth.config.AuthConfig;
 import com.aliyuncs.kms.secretsmanager.client.v2.model.RegionInfo;
 import com.google.gson.Gson;
 import com.google.gson.reflect.TypeToken;
@@ -15,6 +16,11 @@ import java.util.*;
 
 public class CredentialsProviderUtils {
 
+    private static final Map<String, String> AUTH_METHOD_MAP = new HashMap<String, String>() {{
+        put(CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_ECS, AuthConfig.ECS_INSTANCE_IDENTITY);
+        put(CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_ACK, AuthConfig.ACK_OIDC_JWT);
+        put(CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_CLIENT_KEY, AuthConfig.CLIENT_KEY);
+    }};
     private CredentialsProviderUtils() {
         // do nothing
     }
@@ -130,10 +136,105 @@ public class CredentialsProviderUtils {
                 String stsEndpoint = TypeUtils.parseString(map.get(CacheClientConstant.VARIABLE_CREDENTIALS_OIDC_STS_ENDPOINT_KEY));
                 provider = CredentialsProviderUtils.withOIDCRoleArn(roleSessionName, roleArn, oidcProviderArn, oidcTokenFilePath, policy, stsEndpoint, roleSessionExpiration, stsRegionId);
                 break;
+            case CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_ECS:
+            case CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_ACK:
+            case CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_CLIENT_KEY:
+                provider = null;
+                break;
             default:
                 throw new IllegalArgumentException(String.format("%s credentials type[%s] is illegal", sourceTypeName, credentialsType));
         }
         return provider;
+    }
+
+    /**
+     * 从配置Map初始化MAuth配置
+     *
+     * @param map            配置Map
+     * @param sourceTypeName 配置来源名称
+     * @return AuthConfig对象
+     */
+    public static AuthConfig initMAuthConfig(Map<String, String> map, String sourceTypeName) {
+        String credentialsType = map.get(CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_KEY);
+        if (StringUtils.isEmpty(credentialsType)) {
+            return null;
+        }
+        AuthConfig authConfig = new AuthConfig();
+        authConfig.setAuthMethod(AUTH_METHOD_MAP.get(credentialsType));
+        authConfig.setAapArn(map.get(CacheClientConstant.VARIABLE_AAP_ARN_KEY));
+        authConfig.setTokenPath(map.get(CacheClientConstant.VARIABLE_TOKEN_PATH_KEY));
+        authConfig.setClientKeyConfigPath(map.get(CacheClientConstant.VARIABLE_CLIENT_KEY_CONFIG_PATH_KEY));
+
+        String clientKeyPassword = map.get(CacheClientConstant.VARIABLE_CLIENT_KEY_PASSWORD_KEY);
+        String clientKeyPasswordEnvName = map.get(CacheClientConstant.VARIABLE_CLIENT_KEY_PASSWORD_ENV_KEY);
+        if (!StringUtils.isEmpty(clientKeyPasswordEnvName)) {
+            String envPassword = System.getenv(clientKeyPasswordEnvName);
+            if (!StringUtils.isEmpty(envPassword)) {
+                clientKeyPassword = envPassword;
+            }
+        }
+        authConfig.setClientKeyPassword(clientKeyPassword);
+        authConfig.setClientKeyPasswordPath(map.get(CacheClientConstant.VARIABLE_CLIENT_KEY_PASSWORD_PATH_KEY));
+
+        switch (credentialsType) {
+            case CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_ACK:
+                if (StringUtils.isEmpty(authConfig.getAapArn())) {
+                    throw new IllegalArgumentException(String.format(CacheClientConstant.CHECK_PARAM_ERROR_MESSAGE, sourceTypeName, CacheClientConstant.VARIABLE_AAP_ARN_KEY));
+                }
+                if (StringUtils.isEmpty(authConfig.getTokenPath())) {
+                    throw new IllegalArgumentException(String.format(CacheClientConstant.CHECK_PARAM_ERROR_MESSAGE, sourceTypeName, CacheClientConstant.VARIABLE_TOKEN_PATH_KEY));
+                }
+                break;
+            case CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_ECS:
+                if (StringUtils.isEmpty(authConfig.getAapArn())) {
+                    throw new IllegalArgumentException(String.format(CacheClientConstant.CHECK_PARAM_ERROR_MESSAGE, sourceTypeName, CacheClientConstant.VARIABLE_AAP_ARN_KEY));
+                }
+                break;
+            case CacheClientConstant.VARIABLE_CREDENTIALS_TYPE_CLIENT_KEY:
+                if (StringUtils.isEmpty(authConfig.getClientKeyConfigPath())) {
+                    throw new IllegalArgumentException(String.format(CacheClientConstant.CHECK_PARAM_ERROR_MESSAGE, sourceTypeName, CacheClientConstant.VARIABLE_CLIENT_KEY_CONFIG_PATH_KEY));
+                }
+                if (ConfigUtils.getFileByPath(authConfig.getClientKeyConfigPath()) == null) {
+                    throw new IllegalArgumentException(String.format(CacheClientConstant.CHECK_FILE_NOT_EXISTS_ERROR_MESSAGE, sourceTypeName, CacheClientConstant.VARIABLE_CLIENT_KEY_CONFIG_PATH_KEY));
+                }
+                if (StringUtils.isEmpty(authConfig.getClientKeyPassword())
+                        && StringUtils.isEmpty(authConfig.getClientKeyPasswordPath())) {
+                    throw new IllegalArgumentException(String.format("%s credentials missing required parameters[%s or %s]", sourceTypeName, CacheClientConstant.VARIABLE_CLIENT_KEY_PASSWORD_ENV_KEY, CacheClientConstant.VARIABLE_CLIENT_KEY_PASSWORD_PATH_KEY));
+                }
+                if (!StringUtils.isEmpty(authConfig.getClientKeyPasswordPath())
+                        && ConfigUtils.getFileByPath(authConfig.getClientKeyPasswordPath()) == null) {
+                    throw new IllegalArgumentException(String.format(CacheClientConstant.CHECK_FILE_NOT_EXISTS_ERROR_MESSAGE, sourceTypeName, CacheClientConstant.VARIABLE_CLIENT_KEY_PASSWORD_PATH_KEY));
+                }
+                break;
+            default:
+                return null;
+        }
+
+        return authConfig;
+    }
+
+    /**
+     * 从环境变量初始化MAuth配置
+     *
+     * @param envMap 环境变量Map
+     * @return AuthConfig对象
+     */
+    public static AuthConfig initMAuthConfigFromEnv(Map<String, String> envMap) {
+        return CredentialsProviderUtils.initMAuthConfig(envMap, CacheClientConstant.SOURCE_TYPE_ENV);
+    }
+
+    /**
+     * 从配置文件初始化MAuth配置
+     *
+     * @param properties 配置属性
+     * @return AuthConfig对象
+     */
+    public static AuthConfig initMAuthConfigFromConfig(Properties properties) {
+        Map<String, String> map = new HashMap<>();
+        for (Map.Entry<Object, Object> entry : properties.entrySet()) {
+            map.put((String) entry.getKey(), (String) entry.getValue());
+        }
+        return CredentialsProviderUtils.initMAuthConfig(map, CacheClientConstant.SOURCE_TYPE_CONFIG);
     }
 
     /**

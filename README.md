@@ -22,6 +22,7 @@ Alibaba Cloud Secrets Manager Client V2 for Java enables Java developers to easi
 * Provide Alibaba secrets cache ( memory cache or encryption file cache )
 * Provide tolerated disaster by the secrets with the same secret name and secret data in different regions
 * Provide default backoff strategy and user-defined backoff strategy
+* Support cloud-native authentication mode (ECS instance identity, ACK OIDC JWT)
 
 ## Requirements
 
@@ -36,7 +37,7 @@ The recommended way to use the Alibaba Cloud Secrets Manager Client V2 for Java 
 <dependency>
     <groupId>com.aliyun</groupId>
     <artifactId>alibabacloud-secretsmanager-client-v2</artifactId>
-    <version>2.0.1</version>
+    <version>2.0.2</version>
 </dependency>
 ```
 
@@ -169,6 +170,90 @@ public class CacheClientOIDCParametersSample {
                                             .oidcProviderArn("#oidcProviderArn#")
                                             .oidcTokenFilePath("#oidcTokenFilePath#")
                                             .build())
+                            .withRegion("#regionId#")
+                            .build())
+                    .build();
+            SecretInfo secretInfo = client.getSecretInfo("#secretName#");
+            System.out.println(secretInfo);
+        } catch (CacheSecretException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+* Build Secrets Manager Client by cloud-native ECS instance identity
+
+```Java
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClient;
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClientBuilder;
+import com.aliyuncs.kms.secretsmanager.client.v2.exception.CacheSecretException;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.SecretInfo;
+import com.aliyuncs.kms.secretsmanager.client.v2.service.BaseSecretManagerClientBuilder;
+
+public class CacheClientMAuthECSSample {
+
+    public static void main(String[] args) {
+        try {
+            SecretCacheClient client = SecretCacheClientBuilder.newCacheClientBuilder(
+                    BaseSecretManagerClientBuilder.standard()
+                            .withECSInstanceIdentity("#aapArn#")
+                            .withRegion("#regionId#")
+                            .build())
+                    .build();
+            SecretInfo secretInfo = client.getSecretInfo("#secretName#");
+            System.out.println(secretInfo);
+        } catch (CacheSecretException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+* Build Secrets Manager Client by cloud-native ACK OIDC JWT
+
+```Java
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClient;
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClientBuilder;
+import com.aliyuncs.kms.secretsmanager.client.v2.exception.CacheSecretException;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.SecretInfo;
+import com.aliyuncs.kms.secretsmanager.client.v2.service.BaseSecretManagerClientBuilder;
+
+public class CacheClientMAuthACKSample {
+
+    public static void main(String[] args) {
+        try {
+            SecretCacheClient client = SecretCacheClientBuilder.newCacheClientBuilder(
+                    BaseSecretManagerClientBuilder.standard()
+                            .withACKOidcJwt("#aapArn#", "#tokenPath#")
+                            .withRegion("#regionId#")
+                            .build())
+                    .build();
+            SecretInfo secretInfo = client.getSecretInfo("#secretName#");
+            System.out.println(secretInfo);
+        } catch (CacheSecretException e) {
+            e.printStackTrace();
+        }
+    }
+}
+```
+
+* Build Secrets Manager Client by ClientKey
+
+```Java
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClient;
+import com.aliyuncs.kms.secretsmanager.client.v2.SecretCacheClientBuilder;
+import com.aliyuncs.kms.secretsmanager.client.v2.exception.CacheSecretException;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.SecretInfo;
+import com.aliyuncs.kms.secretsmanager.client.v2.service.BaseSecretManagerClientBuilder;
+
+public class CacheClientMAuthClientKeySample {
+
+    public static void main(String[] args) {
+        try {
+            SecretCacheClient client = SecretCacheClientBuilder.newCacheClientBuilder(
+                    BaseSecretManagerClientBuilder.standard()
+                            .withClientKey("#clientKeyConfigPath#", "#clientKeyPasswordPath#")
                             .withRegion("#regionId#")
                             .build())
                     .build();
