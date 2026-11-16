@@ -10,7 +10,7 @@ public interface CacheClientConstant {
     /**
      * 项目版本
      */
-    String PROJECT_VERSION = "2.0.1";
+    String PROJECT_VERSION = "2.0.2";
 
     /**
      * Secrets Manager Client Java V2的User Agent
@@ -192,7 +192,58 @@ public interface CacheClientConstant {
     String CHECK_PARAM_ERROR_MESSAGE = "%s credentials missing required parameters[%s].";
 
     /**
+     * 凭据参数文件不存在错误信息模板
+     */
+    String CHECK_FILE_NOT_EXISTS_ERROR_MESSAGE = "%s credentials param[%s] file not exists.";
+
+    /**
      * 实例网关域名后缀
      */
     String INSTANCE_GATEWAY_DOMAIN_SUFFIX = "cryptoservice.kms.aliyuncs.com";
+
+    /**
+     * MAuth ECS实例身份认证方式
+     */
+    String VARIABLE_CREDENTIALS_TYPE_ECS = "ecs_instance_identity";
+
+    /**
+     * MAuth ACK OIDC JWT认证方式
+     */
+    String VARIABLE_CREDENTIALS_TYPE_ACK = "ack_oidc_jwt";
+
+    /**
+     * MAuth ClientKey认证方式
+     */
+    String VARIABLE_CREDENTIALS_TYPE_CLIENT_KEY = "client_key";
+
+    /**
+     * AapArn配置键名
+     */
+    String VARIABLE_AAP_ARN_KEY = "aap_arn";
+
+    /**
+     * TokenPath配置键名
+     */
+    String VARIABLE_TOKEN_PATH_KEY = "token_path";
+
+    /**
+     * ClientKeyConfigPath配置键名
+     */
+    String VARIABLE_CLIENT_KEY_CONFIG_PATH_KEY = "client_key_private_key_path";
+
+    /**
+     * ClientKeyPassword配置键名
+     */
+    String VARIABLE_CLIENT_KEY_PASSWORD_KEY = "client_key_password";
+
+    /**
+     * ClientKeyPasswordEnvName配置键名
+     */
+    String VARIABLE_CLIENT_KEY_PASSWORD_ENV_KEY = "client_key_password_from_env_variable";
+
+    /**
+     * ClientKeyPasswordPath配置键名
+     */
+    String VARIABLE_CLIENT_KEY_PASSWORD_PATH_KEY = "client_key_password_from_file_path";
+
 }

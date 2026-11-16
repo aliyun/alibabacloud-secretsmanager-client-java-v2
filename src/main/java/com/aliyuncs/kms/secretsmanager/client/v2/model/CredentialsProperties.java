@@ -2,6 +2,7 @@ package com.aliyuncs.kms.secretsmanager.client.v2.model;
 
 
 import com.aliyun.credentials.provider.AlibabaCloudCredentialsProvider;
+import com.aliyuncs.kms.secretsmanager.client.v2.mauth.config.AuthConfig;
 
 import java.util.List;
 import java.util.Properties;
@@ -13,6 +14,8 @@ public class CredentialsProperties {
     private List<RegionInfo> regionInfoList;
 
     private Properties sourceProperties;
+
+    private AuthConfig mauthConfig;
 
     public AlibabaCloudCredentialsProvider getProvider() {
         return this.provider;
@@ -36,5 +39,13 @@ public class CredentialsProperties {
 
     public void setSourceProperties(Properties sourceProperties) {
         this.sourceProperties = sourceProperties;
+    }
+
+    public AuthConfig getMauthConfig() {
+        return this.mauthConfig;
+    }
+
+    public void setMauthConfig(AuthConfig mauthConfig) {
+        this.mauthConfig = mauthConfig;
     }
 }

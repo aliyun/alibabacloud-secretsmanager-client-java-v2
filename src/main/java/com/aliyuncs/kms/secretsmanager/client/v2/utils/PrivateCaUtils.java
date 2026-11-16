@@ -1,6 +1,9 @@
 package com.aliyuncs.kms.secretsmanager.client.v2.utils;
 
 
+import com.aliyun.tea.utils.StringUtils;
+import com.aliyuncs.kms.secretsmanager.client.v2.model.RegionInfo;
+
 import java.io.ByteArrayInputStream;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
@@ -740,6 +743,29 @@ public interface PrivateCaUtils {
         return lastCertContent.replace(BEGIN_CERTIFICATE, "")
                 .replace(END_CERTIFICATE, "")
                 .replaceAll("\\s", "");
+    }
+
+    /**
+     * 解析 CA 证书内容
+     *
+     * @param regionInfo 区域信息
+     * @return CA 证书内容
+     */
+    static String resolveCa(RegionInfo regionInfo) {
+        if (!StringUtils.isEmpty(regionInfo.getCaFilePath())) {
+            try {
+                return ConfigUtils.readFileContent(regionInfo.getCaFilePath());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+        String caContent = REGION_ID_AND_CA_MAP.get(regionInfo.getRegionId());
+        if (caContent == null) {
+            throw new IllegalArgumentException(
+                    String.format("cannot find the built-in ca certificate for region[%s], please provide the caFilePath parameter.",
+                            regionInfo.getRegionId()));
+        }
+        return caContent;
     }
 
 }

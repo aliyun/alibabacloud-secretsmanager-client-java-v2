@@ -14,6 +14,7 @@ import com.aliyun.credentials.provider.OIDCRoleArnCredentialProvider;
 import com.aliyun.credentials.models.CredentialModel;
 import org.junit.Test;
 import org.junit.Assert;
+import org.junit.Assume;
 
 import java.lang.reflect.Constructor;
 import java.util.*;
@@ -1204,11 +1205,27 @@ public class TestCases {
         }
     }
 
+    private static boolean isPingCommandAvailable() {
+        try {
+            boolean windows = System.getProperty("os.name").toLowerCase().contains("win");
+            Process process = new ProcessBuilder("ping", windows ? "-n" : "-c", "1", "127.0.0.1").start();
+            boolean finished = process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     /**
      * 测试DefaultSecretManagerClient的init方法 - regionInfos排序
      */
     @Test
     public void testInitRegionInfosSorting() {
+        Assume.assumeTrue("ping command is required for region latency sorting", isPingCommandAvailable());
         try {
             DefaultSecretManagerClientBuilder builder = DefaultSecretManagerClientBuilder.standard();
             builder.addRegion("cn-guangzhou");

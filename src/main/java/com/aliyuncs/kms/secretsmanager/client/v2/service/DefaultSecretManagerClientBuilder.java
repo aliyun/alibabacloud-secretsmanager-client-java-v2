@@ -9,6 +9,8 @@ import com.aliyun.tea.TeaException;
 import com.aliyun.tea.utils.StringUtils;
 import com.aliyun.teaopenapi.models.Config;
 import com.aliyuncs.kms.secretsmanager.client.v2.exception.CacheSecretException;
+import com.aliyuncs.kms.secretsmanager.client.v2.mauth.MAuth;
+import com.aliyuncs.kms.secretsmanager.client.v2.mauth.config.AuthConfig;
 import com.aliyuncs.kms.secretsmanager.client.v2.model.CredentialsProperties;
 import com.aliyuncs.kms.secretsmanager.client.v2.model.RegionInfo;
 import com.aliyuncs.kms.secretsmanager.client.v2.utils.*;
@@ -32,6 +34,8 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
 
     private String customConfigFile;
 
+    private AuthConfig mauthConfig;
+
     /**
      * 设置访问阿里云的AccessKey
      *
@@ -52,6 +56,49 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
      */
     public DefaultSecretManagerClientBuilder withCredentialsProvider(AlibabaCloudCredentialsProvider provider) {
         this.provider = provider;
+        return this;
+    }
+
+    /**
+     * 使用MAuth ECS实例身份认证
+     *
+     * @param aapArn AAP ARN
+     * @return DefaultSecretManagerClientBuilder实例
+     */
+    public DefaultSecretManagerClientBuilder withECSInstanceIdentity(String aapArn) {
+        this.mauthConfig = new AuthConfig();
+        this.mauthConfig.setAuthMethod(AuthConfig.ECS_INSTANCE_IDENTITY);
+        this.mauthConfig.setAapArn(aapArn);
+        return this;
+    }
+
+    /**
+     * 使用MAuth ACK OIDC JWT认证
+     *
+     * @param aapArn    AAP ARN
+     * @param tokenPath OIDC Token文件路径
+     * @return DefaultSecretManagerClientBuilder实例
+     */
+    public DefaultSecretManagerClientBuilder withACKOidcJwt(String aapArn, String tokenPath) {
+        this.mauthConfig = new AuthConfig();
+        this.mauthConfig.setAuthMethod(AuthConfig.ACK_OIDC_JWT);
+        this.mauthConfig.setAapArn(aapArn);
+        this.mauthConfig.setTokenPath(tokenPath);
+        return this;
+    }
+
+    /**
+     * 使用MAuth ClientKey认证
+     *
+     * @param clientKeyConfigPath   ClientKey配置文件路径
+     * @param clientKeyPasswordPath ClientKey密码文件路径
+     * @return DefaultSecretManagerClientBuilder实例
+     */
+    public DefaultSecretManagerClientBuilder withClientKey(String clientKeyConfigPath, String clientKeyPasswordPath) {
+        this.mauthConfig = new AuthConfig();
+        this.mauthConfig.setAuthMethod(AuthConfig.CLIENT_KEY);
+        this.mauthConfig.setClientKeyConfigPath(clientKeyConfigPath);
+        this.mauthConfig.setClientKeyPasswordPath(clientKeyPasswordPath);
         return this;
     }
 
@@ -139,19 +186,9 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
 
         private final Map<RegionInfo, Client> clientMap = new HashMap<>();
 
-        private final ThreadPoolExecutor pool = new ThreadPoolExecutor(
-                Runtime.getRuntime().availableProcessors(),
-                Runtime.getRuntime().availableProcessors() * 2,
-                60L,
-                TimeUnit.SECONDS,
-                new LinkedBlockingQueue<>(),
-                Executors.defaultThreadFactory(),
-                new ThreadPoolExecutor.AbortPolicy()
-        );
+        private final Map<String, SecretManagerClientWithBearer> bearerClients = new HashMap<>();
 
-        {
-            pool.allowCoreThreadTimeOut(true);
-        }
+        private ThreadPoolExecutor pool;
 
         public GetSecretValueResponse getSecretValue(GetSecretValueRequest req) throws Exception {
             List<Future<GetSecretValueResponse>> futures = new ArrayList<>();
@@ -215,7 +252,12 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
 
         @Override
         public void close() {
-            if (!pool.isShutdown()) {
+            for (SecretManagerClientWithBearer bc : bearerClients.values()) {
+                if (bc != null) {
+                    bc.close();
+                }
+            }
+            if (pool != null && !pool.isShutdown()) {
                 pool.shutdown();
                 try {
                     if (!pool.awaitTermination(60, TimeUnit.SECONDS)) {
@@ -233,6 +275,10 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
         }
 
         public GetSecretValueResponse getSecretValue(RegionInfo regionInfo, GetSecretValueRequest req) throws Exception {
+            SecretManagerClientWithBearer bc = bearerClients.get(regionInfo.getRegionId());
+            if (bc != null) {
+                return bc.getSecretValue(regionInfo, req);
+            }
             return getClient(regionInfo).getSecretValue(req);
         }
 
@@ -291,6 +337,38 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
                 backoffStrategy = new FullJitterBackoffStrategy();
             }
             backoffStrategy.init();
+            this.pool = new ThreadPoolExecutor(
+                    regionInfos.size(),
+                    regionInfos.size() * 2,
+                    60L,
+                    TimeUnit.SECONDS,
+                    new LinkedBlockingQueue<>(),
+                    Executors.defaultThreadFactory(),
+                    new ThreadPoolExecutor.AbortPolicy()
+            );
+            this.pool.allowCoreThreadTimeOut(true);
+            if (mauthConfig != null) {
+                for (RegionInfo regionInfo : regionInfos) {
+                    AuthConfig mauthCfg = copyAuthConfig(mauthConfig);
+                    if (StringUtils.isEmpty(mauthCfg.getKmsEndpoint())) {
+                        String endpoint = resolveEndpoint(regionInfo);
+                        mauthCfg.setKmsEndpoint(endpoint);
+                        if (StringUtils.isEmpty(mauthCfg.getCa()) && endpoint.endsWith(CacheClientConstant.INSTANCE_GATEWAY_DOMAIN_SUFFIX)) {
+                            mauthCfg.setCa(resolveCa(regionInfo));
+                        }
+                    }
+                    try {
+                        MAuth mauthObj = new MAuth(mauthCfg);
+                        SecretManagerClientWithBearer existing = bearerClients.put(regionInfo.getRegionId(), new SecretManagerClientWithBearer(mauthObj));
+                        if (existing != null) {
+                            existing.close();
+                        }
+                    } catch (Exception e) {
+                        throw new RuntimeException("failed to init mauth for region[" + regionInfo.getRegionId() + "]", e);
+                    }
+                }
+                return;
+            }
             if (regionInfos.size() > 1) {
                 regionInfos = regionInfos.stream().distinct().collect(Collectors.toList());
             }
@@ -316,12 +394,22 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
             Map<String, String> envMap = System.getenv();
             initKmsRegionsFromEnv(envMap);
             initCredentialsProviderFromEnv(envMap);
+            initMauthConfigFromEnv(envMap);
         }
 
         private void initCredentialsProviderFromEnv(Map<String, String> envMap) {
             AlibabaCloudCredentialsProvider provider = CredentialsProviderUtils.initCredentialsProviderFromEnv(envMap);
             if (provider != null) {
                 withCredentialsProvider(provider);
+            }
+        }
+
+        private void initMauthConfigFromEnv(Map<String, String> envMap) {
+            if (mauthConfig == null) {
+                AuthConfig cfg = CredentialsProviderUtils.initMAuthConfigFromEnv(envMap);
+                if (cfg != null) {
+                    mauthConfig = cfg;
+                }
             }
         }
 
@@ -339,6 +427,9 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
                     withCredentialsProvider(provider);
                 }
                 regionInfos.addAll(credentialsProperties.getRegionInfoList());
+                if (mauthConfig == null && credentialsProperties.getMauthConfig() != null) {
+                    mauthConfig = credentialsProperties.getMauthConfig();
+                }
             }
         }
 
@@ -403,6 +494,45 @@ public class DefaultSecretManagerClientBuilder extends BaseSecretManagerClientBu
                 }
             }
         }
+    }
+
+    private static AuthConfig copyAuthConfig(AuthConfig config) {
+        AuthConfig copy = new AuthConfig();
+        copy.setAuthMethod(config.getAuthMethod());
+        copy.setAapArn(config.getAapArn());
+        copy.setTokenPath(config.getTokenPath());
+        copy.setClientKeyConfigPath(config.getClientKeyConfigPath());
+        copy.setClientKeyPassword(config.getClientKeyPassword());
+        copy.setClientKeyPasswordPath(config.getClientKeyPasswordPath());
+        copy.setKmsEndpoint(config.getKmsEndpoint());
+        copy.setCa(config.getCa());
+        return copy;
+    }
+
+    private static String resolveEndpoint(RegionInfo regionInfo) {
+        if (!StringUtils.isEmpty(regionInfo.getEndpoint())) {
+            return regionInfo.getEndpoint();
+        } else if (regionInfo.getVpc()) {
+            return KmsEndpointUtils.getVPCEndpoint(regionInfo.getRegionId());
+        }
+        return KmsEndpointUtils.getEndPoint(regionInfo.getRegionId());
+    }
+
+    private static String resolveCa(RegionInfo regionInfo) {
+        if (!StringUtils.isEmpty(regionInfo.getCaFilePath())) {
+            try {
+                return ConfigUtils.readFileContent(regionInfo.getCaFilePath());
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+        String caContent = PrivateCaUtils.REGION_ID_AND_CA_MAP.get(regionInfo.getRegionId());
+        if (caContent == null) {
+            throw new IllegalArgumentException(
+                    String.format("cannot find the built-in ca certificate for region[%s], please provide the caFilePath parameter.",
+                            regionInfo.getRegionId()));
+        }
+        return caContent;
     }
 
     private List<RegionInfo> sortRegionInfos(List<RegionInfo> regionInfos) {

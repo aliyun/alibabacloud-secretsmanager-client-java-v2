@@ -2,9 +2,6 @@ package com.aliyuncs.kms.secretsmanager.client.v2.utils;
 
 import com.aliyun.tea.TeaException;
 import com.aliyun.tea.TeaUnretryableException;
-import com.aliyun.tea.utils.StringUtils;
-
-import java.net.SocketTimeoutException;
 
 public class BackoffUtils {
 
@@ -43,9 +40,9 @@ public class BackoffUtils {
      */
     public static boolean judgeNeedRecoveryException(Exception e) {
         if (e instanceof TeaUnretryableException) {
-            return !StringUtils.isEmpty(e.getMessage()) && (e.getCause() instanceof SocketTimeoutException || e.getMessage().contains(CacheClientConstant.SDK_READ_TIMEOUT));
+            return true;
         } else if (e instanceof TeaException) {
-            return ((TeaException) e).getCode().equals(CacheClientConstant.SDK_READ_TIMEOUT) ||judgeNeedBackoff((TeaException) e);
+            return ((TeaException) e).getCode().equals(CacheClientConstant.SDK_READ_TIMEOUT) || judgeNeedBackoff((TeaException) e);
         }
         return false;
     }
